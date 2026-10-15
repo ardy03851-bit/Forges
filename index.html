@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0c10" />
+<title>Retro Runtime — run DOS games in your browser</title>
+<style>
+  :root{
+    --bg:#0a0c10; --panel:#12151c; --panel-2:#181c26; --line:#232836;
+    --text:#e8ecf4; --muted:#8b94a7; --accent:#4f8cff; --accent-2:#2f6ae0;
+    --ok:#3ddc84; --warn:#ffb020; --err:#ff5c5c; --radius:10px;
+    --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--text);font-family:var(--sans);
+    font-size:14px;line-height:1.5;
+    display:flex;flex-direction:column;overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+
+  /* ---- top bar ---- */
+  .topbar{
+    display:flex;align-items:center;gap:12px;
+    padding:10px 16px;border-bottom:1px solid var(--line);
+    background:var(--panel);flex:0 0 auto;z-index:10;
+  }
+  .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14px;letter-spacing:-.1px}
+  .brand-mark{
+    width:22px;height:22px;border-radius:6px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--accent),#8b5cf6);
+    display:grid;place-items:center;font-size:11px;font-weight:800;color:#fff;
+  }
+  .topbar .spacer{flex:1}
+  .status-dot{
+    display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);
+  }
+  .status-dot i{
+    width:7px;height:7px;border-radius:50%;background:var(--muted);
+    display:inline-block;transition:background .2s;
+  }
+  .status-dot.ready i{background:var(--ok)}
+  .status-dot.busy i{background:var(--warn);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  .btn{
+    padding:6px 12px;border-radius:7px;font-size:12.5px;font-weight:600;
+    background:var(--panel-2);border:1px solid var(--line);
+    transition:background .15s,border-color .15s,transform .08s;
+    white-space:nowrap;
+  }
+  .btn:hover{background:#1f2532;border-color:#2e3648}
+  .btn:active{transform:scale(.97)}
+  .btn.primary{background:var(--accent);border-color:var(--accent-2);color:#fff}
+  .btn.primary:hover{background:#3d7af0}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ---- main layout ---- */
+  .layout{flex:1;display:flex;min-height:0}
+  .sidebar{
+    width:260px;flex:0 0 auto;border-right:1px solid var(--line);
+    background:var(--panel);display:flex;flex-direction:column;min-height:0;
+  }
+  .sidebar-section{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .sidebar-section h3{
+    font-size:11px;text-transform:uppercase;letter-spacing:.8px;
+    color:var(--muted);font-weight:600;margin-bottom:9px;
+  }
+  .field-hint{font-size:11.5px;color:var(--muted);line-height:1.55}
+  .field-hint b{color:#b8c2d4;font-weight:600}
+  .field-hint code{
+    font-family:var(--mono);font-size:10.5px;background:#ffffff0d;
+    padding:1px 4px;border-radius:4px;
+  }
+
+  .controls-list{display:flex;flex-direction:column;gap:6px}
+  .ctrl-row{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:#c3cbdb}
+  .ctrl-row kbd{
+    font-family:var(--mono);font-size:10.5px;background:var(--panel-2);
+    border:1px solid var(--line);border-bottom-width:2px;
+    padding:2px 6px;border-radius:5px;color:#aeb8ca;
+  }
+
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:#07090d}
+  .toolbar{
+    display:flex;align-items:center;gap:8px;padding:9px 14px;
+    border-bottom:1px solid var(--line);background:var(--panel);flex:0 0 auto;
+  }
+  .toolbar .file-name{
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;
+  }
+
+  .stage-wrap{
+    flex:1;position:relative;display:flex;align-items:center;justify-content:center;
+    min-height:0;padding:14px;
+  }
+  .stage{
+    position:relative;background:#000;border-radius:var(--radius);
+    box-shadow:0 0 0 1px var(--line),0 20px 50px -20px #000;
+    overflow:hidden;
+  }
+  #dos-canvas{display:block;width:100%;height:100%;image-rendering:pixelated;outline:none;touch-action:none}
+
+  /* ---- dropzone ---- */
+  .dropzone{
+    position:absolute;inset:14px;border-radius:var(--radius);
+    border:1.5px dashed #2e3648;background:#0e1117;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;text-align:center;padding:24px;
+    transition:border-color .18s,background .18s;
+    cursor:pointer;z-index:5;
+  }
+  .dropzone.over{border-color:var(--accent);background:#4f8cff10}
+  .dropzone .dz-title{font-size:15px;font-weight:600}
+  .dropzone .dz-sub{font-size:12.5px;color:var(--muted);max-width:420px}
+  .dropzone .dz-formats{
+    display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:2px;
+  }
+  .dropzone .dz-formats span{
+    font-family:var(--mono);font-size:10.5px;background:var(--panel-2);
+    border:1px solid var(--line);padding:2px 7px;border-radius:5px;color:#9aa4b8;
+  }
+
+  /* ---- progress overlay ---- */
+  .overlay{
+    position:absolute;inset:0;background:#07090dcc;z-index:20;
+    display:none;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;backdrop-filter:blur(3px);
+  }
+  .overlay.show{display:flex}
+  .overlay .ov-title{font-size:13.5px;font-weight:600}
+  .overlay .ov-sub{font-size:11.5px;color:var(--muted);text-align:center;max-width:340px}
+  .progress{width:min(340px,60%);height:4px;border-radius:99px;background:#1c2130;overflow:hidden}
+  .progress i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--accent),#8b5cf6);transition:width .2s}
+  .spinner{
+    width:22px;height:22px;border-radius:50%;
+    border:2.5px solid #ffffff1c;border-top-color:var(--accent);
+    animation:spin .7s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---- bottom pad ---- */
+  .pad{
+    flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);
+    display:flex;align-items:center;justify-content:space-between;
+    gap:16px;padding:9px 14px;padding-bottom:calc(9px + env(safe-area-inset-bottom));
+  }
+  .pad[hidden]{display:none}
+  .dpad{
+    display:grid;grid-template-columns:repeat(3,34px);grid-template-rows:repeat(3,34px);
+    gap:3px;
+  }
+  .dpad button{
+    border-radius:7px;background:var(--panel-2);border:1px solid var(--line);
+    display:grid;place-items:center;font-size:12px;color:#c3cbdb;
+    touch-action:none;transition:background .08s,border-color .08s;
+  }
+  .dpad button:active,.dpad button.on{background:#4f8cff33;border-color:#4f8cff80;color:#fff}
+  .dpad .up{grid-area:1/2}.dpad .left{grid-area:2/1}
+  .dpad .right{grid-area:2/3}.dpad .down{grid-area:3/2}
+
+  .keys{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end}
+  .keys button{
+    min-width:40px;padding:7px 9px;border-radius:7px;
+    background:var(--panel-2);border:1px solid var(--line);
+    font-size:11px;font-weight:600;color:#c3cbdb;
+    touch-action:none;transition:background .08s,border-color .08s;
+  }
+  .keys button:active,.keys button.on{background:#4f8cff33;border-color:#4f8cff80;color:#fff}
+
+  /* ---- toast ---- */
+  .toast{
+    position:fixed;bottom:22px;left:50%;transform:translate(-50%,12px);
+    z-index:100;padding:10px 18px;border-radius:9px;
+    background:#181c26;border:1px solid var(--line);
+    box-shadow:0 10px 30px #0008;
+    font-size:12.5px;max-width:80%;text-align:center;
+    opacity:0;pointer-events:none;transition:opacity .22s,transform .22s;
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.err{border-color:#ff5c5c55;color:#ffc4c4}
+
+  @media (max-width:720px){
+    .sidebar{display:none}
+    .stage-wrap{padding:8px}
+    .keys button{min-width:34px;padding:6px 7px;font-size:10.5px}
+    .dpad{grid-template-columns:repeat(3,30px);grid-template-rows:repeat(3,30px)}
+  }
+</style>
+</head>
+<body>
+
+<!-- ================= top bar ================= -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">R</span>
+    <span>Retro Runtime</span>
+  </div>
+  <div class="spacer"></div>
+  <span class="status-dot" id="statusDot"><i></i><span id="statusText">Idle</span></span>
+  <button class="btn" id="btnPad">Controls</button>
+  <button class="btn" id="btnFull">Fullscreen</button>
+</header>
+
+<!-- ================= layout ================= -->
+<div class="layout">
+
+  <!-- sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h3>Loaded bundle</h3>
+      <div class="field-hint" id="bundleInfo">No game loaded yet.</div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Getting started</h3>
+      <div class="field-hint">
+        Drop a DOS game file onto the stage, or use the
+        <b>Choose file</b> button. Multiple files are bundled together.
+        <br><br>
+        Accepted: <code>.exe</code> <code>.com</code> <code>.bat</code>
+        <code>.zip</code> <code>.jsdos</code>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Notes</h3>
+      <div class="field-hint">
+        Runs entirely in your browser using a WebAssembly build of DOSBox.
+        Nothing is uploaded anywhere.
+        <br><br>
+        Windows 32/64-bit <code>.exe</code> files are not supported — only
+        real-mode DOS programs.
+      </div>
+    </div>
+    <div class="sidebar-section" style="flex:1">
+      <h3>Key mapping</h3>
+      <div class="controls-list">
+        <div class="ctrl-row"><span>Movement</span><span><kbd>↑ ↓ ← →</kbd></span></div>
+        <div class="ctrl-row"><span>Confirm / Fire</span><span><kbd>Enter</kbd></span></div>
+        <div class="ctrl-row"><span>Cancel / Menu</span><span><kbd>Esc</kbd></span></div>
+        <div class="ctrl-row"><span>Pause</span><span><kbd>P</kbd></span></div>
+        <div class="ctrl-row"><span>Fullscreen</span><span><kbd>F11</kbd></span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- main -->
+  <div class="main">
+    <div class="toolbar">
+      <button class="btn primary" id="btnPick">Choose file</button>
+      <input type="file" id="fileInput" multiple hidden />
+      <span class="file-name" id="fileName">No file selected</span>
+      <button class="btn" id="btnRestart" disabled>Restart</button>
+      <button class="btn" id="btnStop" disabled>Stop</button>
+    </div>
+
+    <div class="stage-wrap" id="stageWrap">
+      <div class="stage" id="stage">
+        <div class="dropzone" id="dropzone">
+          <div class="dz-title">Drop a DOS game here</div>
+          <div class="dz-sub">
+            Drag &amp; drop a single executable, a zip archive, or a folder
+            of game files. Everything is mounted into DOSBox as drive C:.
+          </div>
+          <div class="dz-formats">
+            <span>.exe</span><span>.com</span><span>.bat</span>
+            <span>.zip</span><span>.jsdos</span>
+          </div>
+        </div>
+        <canvas id="dos-canvas" tabindex="0"></canvas>
+
+        <div class="overlay" id="overlay">
+          <div class="spinner" id="spin"></div>
+          <div class="ov-title" id="ovTitle">Preparing…</div>
+          <div class="ov-sub" id="ovSub"></div>
+          <div class="progress"><i id="progressBar"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- on-screen controls -->
+    <div class="pad" id="pad" hidden>
+      <div class="dpad">
+        <button class="up"    data-key="200" aria-label="Up">▲</button>
+        <button class="left"  data-key="203" aria-label="Left">◀</button>
+        <button class="right" data-key="205" aria-label="Right">▶</button>
+        <button class="down"  data-key="208" aria-label="Down">▼</button>
+      </div>
+      <div class="keys">
+        <button data-key="29">Ctrl</button>
+        <button data-key="56">Alt</button>
+        <button data-key="57">Space</button>
+        <button data-key="28">Enter</button>
+        <button data-key="1">Esc</button>
+        <button data-key="15">Tab</button>
+        <button data-key="21">Y</button>
+        <button data-key="49">N</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* =========================================================
+     DOM refs
+     ========================================================= */
+  const $ = (s) => document.querySelector(s);
+
+  const stageEl    = $('#stage');
+  const canvasEl   = $('#dos-canvas');
+  const dropzone   = $('#dropzone');
+  const overlay    = $('#overlay');
+  const ovTitle    = $('#ovTitle');
+  const ovSub      = $('#ovSub');
+  const spin       = $('#spin');
+  const progressBar= $('#progressBar');
+  const fileInput  = $('#fileInput');
+  const fileNameEl = $('#fileName');
+  const bundleInfo = $('#bundleInfo');
+  const statusDot  = $('#statusDot');
+  const statusText = $('#statusText');
+  const padEl      = $('#pad');
+  const toastEl    = $('#toast');
+
+  let toastTimer = 0;
+  function toast(msg, isErr) {
+    toastEl.textContent = msg;
+    toastEl.className = 'toast show' + (isErr ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.className = 'toast', 3200);
+  }
+
+  function setStatus(text, cls) {
+    statusText.textContent = text;
+    statusDot.className = 'status-dot' + (cls ? ' ' + cls : '');
+  }
+
+  /* =========================================================
+     Script loader (with fallbacks)
+     ========================================================= */
+  const loaded = Object.create(null);
+
+  function loadScript(src) {
+    if (loaded[src]) return loaded[src];
+    loaded[src] = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = () => resolve(src);
+      s.onerror = () => { delete loaded[src]; reject(new Error('load failed: ' + src)); };
+      document.head.appendChild(s);
+    });
+    return loaded[src];
+  }
+
+  /* ---- js-dos v8 ---- */
+  const JSDOS_URLS = [
+    'https://v8.js-dos.com/latest/js-dos.js',
+    'https://cdn.jsdelivr.net/npm/js-dos@8.3.0/dist/js-dos.js',
+    'https://unpkg.com/js-dos@8.3.0/dist/js-dos.js'
+  ];
+  let jsdosLoaded = false;
+
+  async function ensureJsDos() {
+    if (jsdosLoaded || typeof window.Dos === 'function') {
+      jsdosLoaded = true;
+      return;
+    }
+    let lastErr = null;
+    for (const url of JSDOS_URLS) {
+      try {
+        await loadScript(url);
+        if (typeof window.Dos === 'function') {
+          jsdosLoaded = true;
+          return;
+        }
+      } catch (e) { lastErr = e; }
+    }
+    throw new Error('Could not load the DOS emulator. Check your connection.');
+  }
+
+  /* ---- JSZip ---- */
+  const JSZIP_URLS = [
+    'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+    'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js'
+  ];
+  async function ensureJSZip() {
+    if (window.JSZip) return;
+    let lastErr = null;
+    for (const url of JSZIP_URLS) {
+      try {
+        await loadScript(url);
+        if (window.JSZip) return;
+      } catch (e) { lastErr = e; }
+    }
+    throw new Error('Could not load the archive library. Check your connection.');
+  }
+
+  /* =========================================================
+     Bundle helpers
+     ========================================================= */
+  const ENTRY_RE = /\.(exe|com|bat)$/i;
+
+  function pickEntry(names) {
+    const flat = names.filter(n => ENTRY_RE.test(n) && n.indexOf('/') === -1);
+    const pool = flat.length ? flat : names.filter(n => ENTRY_RE.test(n));
+    if (!pool.length) return null;
+
+    const score = (n) => {
+      const b = n.toLowerCase().replace(ENTRY_RE, '').replace(/^.*\//, '');
+      let s = 0;
+      if (/^(start|play|run|game|main|launch|go|begin)$/.test(b)) s += 100;
+      if (/^(install|setup|config|setupp|unins|readme|order|register)/.test(b)) s -= 120;
+      if (b.length <= 8) s += 5;
+      return s;
+    };
+    pool.sort((a, b) => (score(b) - score(a)) || (a.length - b.length));
+    return pool[0];
+  }
+
+  function commonDir(paths) {
+    if (!paths.length) return 0;
+    const seg = paths[0].split('/')[0];
+    if (!seg) return 0;
+    const prefix = seg + '/';
+    for (let i = 0; i < paths.length; i++) {
+      if (paths[i].indexOf(prefix) !== 0) return 0;
+    }
+    return prefix.length;
+  }
+
+  function makeConf(entry) {
+    const lines = [
+      '[sdl]',
+      'autolock = true',
+      '[dosbox]',
+      'machine = svga_s3',
+      'memsize = 32',
+      '[render]',
+      'aspect = true',
+      'scaler = none',
+      '[cpu]',
+      'core = auto',
+      'cycles = auto',
+      '[autoexec]',
+      'mount c .',
+      'c:'
+    ];
+    if (entry) lines.push(entry);
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  async function bundleFromFiles(files, onProgress) {
+    await ensureJSZip();
+    const zip = new JSZip();
+    const names = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const name = (f.name || ('file' + i)).replace(/\\/g, '/');
+      names.push(name);
+      zip.file(name, f);
+    }
+    zip.file('.jsdos/dosbox.conf', makeConf(pickEntry(names)));
+    return zip.generateAsync(
+      { type: 'blob', compression: 'STORE' },
+      (m) => onProgress && onProgress(Math.round(m.percent))
+    );
+  }
+
+  async function bundleFromZip(file, onProgress) {
+    await ensureJSZip();
+    const src = await JSZip.loadAsync(file);
+
+    const rawPaths = [];
+    src.forEach((path, entry) => { if (!entry.dir) rawPaths.push(path); });
+    if (!rawPaths.length) throw new Error('That zip file is empty.');
+
+    const strip = commonDir(rawPaths);
+    const out = new JSZip();
+    const relNames = [];
+    const total = rawPaths.length;
+
+    for (let i = 0; i < total; i++) {
+      const p = rawPaths[i];
+      const data = await src.file(p).async('uint8array');
+      const rel = p.slice(strip);
+      out.file(rel, data);
+      relNames.push(rel);
+      if (onProgress && (i % 8 === 0 || i === total - 1)) {
+        onProgress(Math.round(((i + 1) / total) * 88));
+      }
+    }
+
+    out.file('.jsdos/dosbox.conf', makeConf(pickEntry(relNames)));
+    return out.generateAsync(
+      { type: 'blob', compression: 'STORE' },
+      (m) => onProgress && onProgress(88 + Math.round(m.percent * 0.12))
+    );
+  }
+
+  async function prepareBundle(files, onProgress) {
+    const single = files.length === 1 ? files[0] : null;
+
+    if (single) {
+      const n = single.name.toLowerCase();
+      if (/\.(jsdos|dosz)$/.test(n)) return single;
+
+      if (/\.zip$/.test(n)) {
+        await ensureJSZip();
+        const probe = await JSZip.loadAsync(single);
+        if (probe.file('.jsdos/dosbox.conf')) return single;
+        probe.close && probe.close();
+        return bundleFromZip(single, onProgress);
+      }
+    }
+    return bundleFromFiles(files, onProgress);
+  }
+
+  /* =========================================================
+     Emulator lifecycle — CORRECT v8 API
+     ========================================================= */
+  let dosProps = null;
+  let commandInterface = null;
+  let currentBlobUrl = null;
+  let busy = false;
+  let lastFiles = null;
+
+  async function bootDos(blob) {
+    await ensureJsDos();
+
+    /* tear down previous instance */
+    if (dosProps) {
+      try { dosProps.stop && dosProps.stop(); } catch (_) {}
+      dosProps = null;
+    }
+    commandInterface = null;
+
+    if (currentBlobUrl) {
+      URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = null;
+    }
+    currentBlobUrl = URL.createObjectURL(blob);
+
+    /* v8 API:
+       Dos(element) returns a DosProps object.
+       Calling .run(bundleUrl) returns a Promise<CommandInterface>.
+       The optional options object can be passed as the 2nd argument to Dos(). */
+    dosProps = window.Dos(canvasEl, {
+      autoStart: true,
+      renderAspect: '4/3',
+      theme: 'dark',
+      noCursor: true
+    });
+
+    const ci = await dosProps.run(currentBlobUrl);
+    commandInterface = ci;
+
+    /* optional: react to the emulator exiting */
+    if (ci && ci.events && typeof ci.events === 'function') {
+      try {
+        const ev = ci.events();
+        if (ev && typeof ev.onExit === 'function') {
+          ev.onExit(() => {
+            setStatus('Exited', null);
+            toast('The program has exited.');
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
+  function sendKey(code, down) {
+    if (!commandInterface) return;
+    try { commandInterface.sendKeyEvent(code, down); } catch (_) {}
+  }
+
+  /* =========================================================
+     Overlay / progress
+     ========================================================= */
+  function showOverlay(title, sub, showSpinner, pct) {
+    ovTitle.textContent = title || 'Working…';
+    ovSub.textContent = sub || '';
+    spin.style.display = showSpinner ? '' : 'none';
+    if (typeof pct === 'number') {
+      progressBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+      progressBar.parentElement.style.display = '';
+    } else {
+      progressBar.parentElement.style.display = 'none';
+    }
+    overlay.classList.add('show');
+  }
+  function hideOverlay() {
+    overlay.classList.remove('show');
+    progressBar.style.width = '0%';
+  }
+
+  /* =========================================================
+     File handling
+     ========================================================= */
+  async function handleFiles(list) {
+    const files = Array.prototype.slice.call(list || []);
+    if (!files.length) return;
+    if (busy) { toast('Still working on the previous file…'); return; }
+
+    busy = true;
+    lastFiles = files;
+    dropzone.style.display = 'none';
+    setStatus('Loading', 'busy');
+    showOverlay('Reading game data…', files.length === 1 ? files[0].name : files.length + ' files', true, 3);
+
+    try {
+      const blob = await prepareBundle(files, (p) => {
+        showOverlay('Packaging game files…', '', true, 5 + p * 0.5);
+      });
+
+      showOverlay('Starting DOSBox…', 'The emulator is downloaded once and cached.', true, 60);
+      await bootDos(blob);
+
+      hideOverlay();
+      setStatus('Running', 'ready');
+      fileNameEl.textContent = files.length === 1 ? files[0].name : files.length + ' files';
+      bundleInfo.textContent =
+        (files.length === 1 ? files[0].name : files.length + ' files') +
+        ' — ' + (blob.size / 1048576).toFixed(2) + ' MB';
+      $('#btnStop').disabled = false;
+      $('#btnRestart').disabled = false;
+      toast('Game started.');
+    } catch (err) {
+      console.error(err);
+      hideOverlay();
+      dropzone.style.display = '';
+      setStatus('Error', null);
+      toast(err && err.message ? err.message : 'Could not start that file.', true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function stopEmulator() {
+    if (dosProps) {
+      try { dosProps.stop && dosProps.stop(); } catch (_) {}
+      dosProps = null;
+    }
+    commandInterface = null;
+    if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
+    hideOverlay();
+    dropzone.style.display = '';
+    fileNameEl.textContent = 'No file selected';
+    bundleInfo.textContent = 'No game loaded yet.';
+    $('#btnStop').disabled = true;
+    $('#btnRestart').disabled = true;
+    setStatus('Idle', null);
+    padEl.hidden = true;
+  }
+
+  /* ---- picker ---- */
+  $('#btnPick').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    handleFiles(fileInput.files);
+    fileInput.value = '';
+  });
+
+  /* ---- dropzone ---- */
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  let dragDepth = 0;
+  document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragDepth++;
+    dropzone.style.display = '';
+    dropzone.classList.add('over');
+  });
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) dropzone.classList.remove('over');
+  });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    dropzone.classList.remove('over');
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length) handleFiles(dt.files);
+  });
+
+  /* ---- restart / stop ---- */
+  $('#btnRestart').addEventListener('click', () => {
+    if (lastFiles) handleFiles(lastFiles);
+  });
+  $('#btnStop').addEventListener('click', stopEmulator);
+
+  /* =========================================================
+     On-screen controls
+     ========================================================= */
+  $('#btnPad').addEventListener('click', () => {
+    padEl.hidden = !padEl.hidden;
+    fitStage();
+  });
+
+  document.querySelectorAll('#pad [data-key]').forEach((btn) => {
+    const code = parseInt(btn.getAttribute('data-key'), 10);
+    const down = (e) => { e.preventDefault(); btn.classList.add('on'); sendKey(code, true); };
+    const up   = (e) => { e.preventDefault(); btn.classList.remove('on'); sendKey(code, false); };
+    btn.addEventListener('pointerdown', down);
+    btn.addEventListener('pointerup', up);
+    btn.addEventListener('pointercancel', up);
+    btn.addEventListener('pointerleave', up);
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+
+  /* =========================================================
+     Fullscreen
+     ========================================================= */
+  $('#btnFull').addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      const req = document.documentElement.requestFullscreen ||
+                  document.documentElement.webkitRequestFullscreen;
+      if (req) req.call(document.documentElement).catch(() => toast('Fullscreen not available'));
+    } else {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document);
+    }
+  });
+  document.addEventListener('fullscreenchange', () => setTimeout(fitStage, 250));
+
+  /* =========================================================
+     Stage sizing (4:3, letterboxed, no stretch)
+     ========================================================= */
+  let rafFit = 0;
+  function fitStage() {
+    const wrap = stageEl.parentElement;
+    const availW = wrap.clientWidth - 28;
+    const availH = wrap.clientHeight - 28;
+    if (availW <= 0 || availH <= 0) return;
+    const AR = 4 / 3;
+    let w = availW, h = availW / AR;
+    if (h > availH) { h = availH; w = availH * AR; }
+    stageEl.style.width  = Math.floor(w) + 'px';
+    stageEl.style.height = Math.floor(h) + 'px';
+  }
+  function scheduleFit() {
+    if (rafFit) return;
+    rafFit = requestAnimationFrame(() => { rafFit = 0; fitStage(); });
+  }
+  window.addEventListener('resize', scheduleFit);
+  window.addEventListener('orientationchange', () => setTimeout(fitStage, 250));
+  if (window.ResizeObserver) new ResizeObserver(scheduleFit).observe(stageEl.parentElement);
+
+  /* =========================================================
+     Cleanup
+     ========================================================= */
+  window.addEventListener('pagehide', () => {
+    if (currentBlobUrl) { URL.revokeObjectURL(currentBlobUrl); currentBlobUrl = null; }
+    if (dosProps) { try { dosProps.stop && dosProps.stop(); } catch (_) {} }
+  });
+
+  /* initial sizing */
+  fitStage();
+})();
+</script>
+</body>
+</html>
